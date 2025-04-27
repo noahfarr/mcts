@@ -12,12 +12,7 @@ from tree import (
     instantiate,
     get_state,
 )
-from action_selection import (
-    act_randomly,
-    act_uct,
-    act_greedy,
-    batch_act_randomly,
-)
+from action_selection import act_randomly, act_uct, act_greedy, batch_act_randomly
 from visualization import visualize_tree
 
 
@@ -71,7 +66,6 @@ def simulation(
     step: Callable,
     tree: Tree,
     node: jax.Array,
-    # action_selection_fun: Callable,
 ):
 
     state = get_state(tree, node)
@@ -94,11 +88,10 @@ def simulation(
         (key, state),
     )
 
-    visits = tree.visits[node] + 1
     return tree.replace(  # type: ignore
         rewards=update(tree.rewards, state.rewards, node),
         values=update(tree.values, state.rewards[player], node),
-        visits=update(tree.visits, visits, node),
+        visits=update(tree.visits, tree.visits[node] + 1, node),
     )
 
 
@@ -109,19 +102,19 @@ def backpropagation(tree: Tree, node: jax.Array):
         return node != Tree.ROOT_INDEX
 
     def body_fun(carry: tuple) -> tuple:
-        tree, node, reward = carry
+        tree, node, value = carry
 
-        reward *= -1
+        value *= -1
 
         parent = tree.parents[node]
         visit = tree.visits[parent]
 
-        value = tree.values[parent] + (reward - tree.values[parent]) / (visit + 1)
+        parent_value = tree.values[parent] + (value - tree.values[parent]) / (visit + 1)
         tree = tree.replace(
-            values=update(tree.values, value, parent),
+            values=update(tree.values, parent_value, parent),
             visits=update(tree.visits, visit + 1, parent),
         )
-        return (tree, parent, reward)
+        return (tree, parent, value)
 
     tree, *_ = jax.lax.while_loop(
         cond_fun,
@@ -150,17 +143,13 @@ def search(
 
         next_node = jax.lax.select(next_node == Tree.UNVISITED, i + 1, next_node)
 
-        tree = jax.lax.cond(
+        tree, node = jax.lax.cond(
             tree.states.terminated[node],
-            lambda tree: tree,
-            lambda tree: expansion(tree, step, node, action, next_node),
-            tree,
+            lambda _: (tree, node),
+            lambda _: (expansion(tree, step, node, action, next_node), next_node),
+            operand=None,
         )
-        node = jax.lax.select(
-            tree.states.terminated[node],
-            node,
-            next_node,
-        )
+
         tree = simulation(subkey, step, tree, node)
         tree = backpropagation(tree, node)
         return (key, tree)
@@ -212,10 +201,8 @@ def main():
             visualize_tree(tree, 0, Tree.ROOT_INDEX)
         key, subkey = jax.random.split(key)
         keys = jax.random.split(subkey, args.batch_size)
-        # action_B = batch_act_randomly(keys, state.observation, state.legal_action_mask)
-        # action_B = batch_search(keys, tree, env.step, args.num_simulations)
-        # action = jnp.where(state.current_player == 0, action_A, action_B)
-        action = action_A
+        action_B = batch_act_randomly(keys, state.observation, state.legal_action_mask)
+        action = jnp.where(state.current_player == 0, action_A, action_B)
 
         state = batch_step(state, action)
         state.save_svg(f"iteration_{i}.svg")
