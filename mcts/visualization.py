@@ -1,93 +1,166 @@
-import matplotlib.pyplot as plt
-import networkx as nx
-import jax.numpy as jnp
+from __future__ import annotations
 
-UNVISITED = -1 
+from pathlib import Path
+from typing import Optional, Union
+
+import jax
+import numpy as np
+from graphviz import Digraph
+
+from tree import Tree, get_state  # noqa: F401 – imported for possible extensions
+
+__all__ = ["visualize_tree"]
 
 
-def hierarchy_pos(
-    G,
-    root=None,
-    width=1.0,
-    vert_gap=0.2,
-    vert_loc=0,
-    xcenter=0.5,
-    pos=None,
-    parent=None,
+def visualize_tree(
+    tree: Tree,
+    batch: int = 0,
+    node: int = Tree.ROOT_INDEX,
+    *,
+    max_depth: Optional[int] = None,
+    show_unvisited: bool = False,
+    filename: Optional[Union[str, Path]] = None,
+    fmt: str = "svg",
+    inline: bool = False,
+    view: bool = True,
 ):
+    """Render an MCTS *Tree* to SVG/PNG/PDF using **Graphviz**.
+
+    Parameters
+    ----------
+    tree : Tree
+        The batched MCTS tree.
+    batch : int, default 0
+        Which batch element to visualise.
+    node : int, default ``Tree.ROOT_INDEX``
+        Index of the root node for the rendered subtree.
+    max_depth : int | None, optional
+        If given, stop the recursion after *max_depth* layers.
+    show_unvisited : bool, default False
+        Visualise *UNVISITED* children as grey diamonds.
+    filename : str | Path | None, optional
+        Where to save the figure.  The suffix will be replaced by *fmt*.
+        Ignored if *inline* is ``True``.
+    fmt : str, default "svg"
+        Any output format supported by Graphviz (``"png"``, ``"pdf"``…).
+    inline : bool, default False
+        Return SVG/PNG bytes and, if running inside IPython, display them
+        immediately.  Disables writing to disk.
+    view : bool, default False
+        Ask Graphviz to open the rendered file with the system viewer.
+        Ignored when *inline* is ``True``.
+
+    Returns
+    -------
+    pathlib.Path | bytes
+        *Path* to the generated file (disk output) **or** SVG/PNG *bytes*
+        (inline mode).
     """
-    If no positions are provided, assigns positions in a top-down hierarchy.
-    Source: https://stackoverflow.com/a/29597209
-    """
-    if pos is None:
-        pos = {root: (xcenter, vert_loc)}
-    else:
-        pos[root] = (xcenter, vert_loc)
-    children = list(G.successors(root))
-    if not children:
-        return pos
-    dx = width / len(children)
-    nextx = xcenter - width / 2 - dx / 2
-    for child in children:
-        nextx += dx
-        pos = hierarchy_pos(
-            G,
-            child,
-            width=dx,
-            vert_gap=vert_gap,
-            vert_loc=vert_loc - vert_gap,
-            xcenter=nextx,
-            pos=pos,
-            parent=root,
-        )
-    return pos
 
+    # ─────────────────── strip the batch dimension ────────────────────────
+    t = jax.tree.map(lambda x: np.asarray(x[batch]), tree)  # type: ignore[arg-type]
 
-import matplotlib.pyplot as plt
-import networkx as nx
-
-UNVISITED = -1
-
-
-def visualize_tree(tree, batch: int = 0, root: int = 0, figsize=(12, 8)):
-    """
-    Draws only the reachable part of your MCTS for one batch index.
-    """
-    G = nx.DiGraph()
-    num_nodes = tree.parents.shape[1]
-    num_actions = tree.children.shape[2]
-
-    for node in range(num_nodes):
-        val = float(tree.values[batch, node])
-        visits = int(tree.visits[batch, node])
-        G.add_node(node, label=f"{node}\nval={val:.2f}\nvisits={visits}")
-
-    # Add edges for visited children
-    for node in range(num_nodes):
-        for action in range(num_actions):
-            child = int(tree.children[batch, node, action])
-            if child != UNVISITED:
-                G.add_edge(node, child, action=action)
-
-    # Keep only nodes reachable from the root
-    reachable = set(nx.descendants(G, root)) | {root}
-    H = G.subgraph(reachable).copy()
-
-    # Compute positions on the pruned graph
-    pos = hierarchy_pos(H, root=root)
-
-    plt.figure(figsize=figsize)
-    nx.draw(
-        H,
-        pos,
-        labels=nx.get_node_attributes(H, "label"),
-        with_labels=True,
-        node_size=2000,
-        node_color="lightblue",
-        font_size=10,
+    dot = Digraph(
+        "MCTS",
+        node_attr={
+            "shape": "circle",
+            "fontname": "Helvetica",
+            "fontsize": "10",
+            "style": "filled",
+            "fillcolor": "white",
+        },
     )
-    edge_labels = {(u, v): d["action"] for u, v, d in H.edges(data=True)}
-    nx.draw_networkx_edge_labels(H, pos, edge_labels=edge_labels, font_color="gray")
-    plt.axis("off")
-    plt.tight_layout()
-    plt.show()
+    dot.attr(rankdir="TB")  # top → bottom
+
+    n_children = t.children.shape[1]
+
+    # ────────────────────────── colour helpers ────────────────────────────
+    _VISIT_CMAP = np.array(
+        [
+            "#ffffff",  # 0
+            "#e6f2ff",  # 1–1
+            "#cce5ff",  # 2–3
+            "#b3d8ff",  # 4–7
+            "#99ccff",  # 8–15
+            "#80bfff",  # 16+
+        ]
+    )
+
+    def _visit_color(n_visits: int) -> str:
+        """Map visit count → colour bucket (log2)."""
+        bucket = min(len(_VISIT_CMAP) - 1, int(np.log2(n_visits + 1)))
+        return _VISIT_CMAP[bucket]
+
+    _TERMINAL_COLOR = "#c8e6c9"  # light‑green fill for terminal states
+    _PLAYER_BORDER = {0: "#e74c3c", 1: "#2471a3"}  # red / blue borders
+
+    # ─────────────────────── depth‑first recursion ────────────────────────
+    def _add(cur: int, depth: int) -> None:
+        visits = int(t.visits[cur])
+        value = float(t.values[cur])
+        terminated = bool(t.states.terminated[cur])
+        player = int(t.states.current_player[cur])
+
+        dot.node(
+            str(cur),
+            label=f"{cur}\\nN={visits}\\nV={value:+.3f}\\nP={player}",
+            fillcolor=_TERMINAL_COLOR if terminated else _visit_color(visits),
+            color=_PLAYER_BORDER[player],
+            penwidth="1.6",
+        )
+
+        if max_depth is not None and depth >= max_depth:
+            return
+
+        for action in range(n_children):
+            child = int(t.children[cur, action])
+            edge_label = f"a={action}"
+
+            if child == Tree.UNVISITED and not show_unvisited:
+                continue
+
+            if child == Tree.UNVISITED:
+                # grey diamond placeholder
+                ghost = f"u{cur}_{action}"
+                dot.node(
+                    ghost,
+                    shape="diamond",
+                    label="?",
+                    style="dotted",
+                    fillcolor="#eeeeee",
+                )
+                dot.edge(str(cur), ghost, label=edge_label, style="dotted")
+            else:
+                dot.edge(str(cur), str(child), label=edge_label)
+                _add(child, depth + 1)
+
+    _add(int(node), 0)
+
+    # ────────────────────────── output helpers ────────────────────────────
+    def _emit_inline() -> bytes:
+        data = dot.pipe(format=fmt)
+        try:
+            # if in IPython, display inline
+            from IPython.display import display, SVG  # type: ignore
+
+            if fmt == "svg":
+                display(SVG(data))
+        except Exception:
+            pass  # silent fallback for plain Python REPL
+        return data
+
+    def _emit_file() -> Path:
+        out_path = (
+            Path(f"tree_batch{batch}_node{node}.{fmt}")
+            if filename is None
+            else Path(filename).with_suffix(f".{fmt}")
+        )
+        # Use stem to let Graphviz append extension
+        dot.render(out_path.with_suffix(""), format=fmt, cleanup=True, view=view)
+        return out_path
+
+    # ─────────────────────────── choose mode ──────────────────────────────
+    if inline:
+        return _emit_inline()
+
+    return _emit_file()

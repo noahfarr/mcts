@@ -118,9 +118,9 @@ def play_episode(args: Config):
 
             if args.render:
                 if tree_A is not None:
-                    visualize_tree(env, tree_A)
+                    visualize_tree(tree_A)
                 if tree_B is not None:
-                    visualize_tree(env, tree_B)
+                    visualize_tree(tree_B)
 
             state = batch_step(state, action)
             rewards += state.rewards
