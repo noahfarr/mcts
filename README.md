@@ -12,7 +12,6 @@ A **fully‑vectorised, differentiable‑friendly** implementation of Monte Ca
 | **Batch search** | `batch_search` wraps `search` with `jax.vmap`, enabling thousands of simultaneous tree searches for large‑scale self‑play or policy evaluation. |
 | **Plug‑and‑play policies** | `action_selection.py` provides `act_randomly`, `act_uct`, `act_greedy`, but you can inject any custom policy function. |
 | **Environment‑agnostic** | Built on **pgx**, so any OpenAI‑Gym‑compatible environment that pgx supports will work out‑of‑the‑box. |
-| **Typed & tested** | Annotated with `chex` types; comes with lightweight unit tests (see `tests/`). |
 | **Visualization** | `visualization.py` renders the search tree at any point for debugging or demos. |
 
 ---
@@ -38,22 +37,15 @@ A **fully‑vectorised, differentiable‑friendly** implementation of Monte Ca
 Ensure you have **Python ≥ 3.9**. Then run:
 
 ```bash
-pip install -U jax jaxlib  # choose the correct wheel for your accelerator
-pip install pgx chex
-```
-
-Or, with the provided lock‑file:
-
-```bash
 pip install -r requirements.txt
 ```
 
 ### 2. Run the example
 
 ```bash
-python example.py --env tic_tac_toe --num_sim 100 --render
+python example.py --env tic_tac_toe --num_sim 1028 --render
 ```
-This will open a simple Tic‑Tac‑Toe match where the agent selects moves using MCTS.
+This will open a simple Tic‑Tac‑Toe match where the agent selects moves using MCTS and plays vs. a random opponent.
 
 ---
 
