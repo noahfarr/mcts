@@ -1,6 +1,6 @@
 # Monte Carlo Tree Search (MCTS) ― JAX implementation
 
-A **fully‑vectorised, differentiable‑friendly** implementation of Monte Carlo Tree Search written with [JAX](https://github.com/google/jax) and [pgx](https://github.com/kurowasan/pgx). The codebase is kept minimal yet production‑ready, focusing on clarity, speed and ease of integration into RL research projects.
+A **fully‑vectorised, differentiable‑friendly** implementation of Monte Carlo Tree Search written with [JAX](https://github.com/google/jax) and [pgx](https://github.com/kurowasan/pgx).
 
 ---
 
