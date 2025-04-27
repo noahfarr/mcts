@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import jax.numpy as jnp
 
-UNVISITED = -1  # make sure this matches your Tree definition
+UNVISITED = -1 
 
 
 def hierarchy_pos(
